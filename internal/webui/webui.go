@@ -90,6 +90,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/state", s.guard(s.handleState))
 	mux.HandleFunc("/api/toggle", s.guard(s.handleToggle))
 	mux.HandleFunc("/api/diag", s.guard(s.handleDiag))
+	mux.HandleFunc("/api/now", s.guard(s.handleNow))
+	mux.HandleFunc("/api/repeated", s.guard(s.handleRepeated))
+	mux.HandleFunc("/api/restart-explorer", s.guard(s.handleRestartExplorer))
 	mux.HandleFunc("/api/kill", s.guard(s.handleKill))
 	mux.HandleFunc("/api/elevate", s.guard(s.handleElevate))
 	mux.HandleFunc("/api/quit", s.guard(s.handleQuit))
@@ -363,6 +366,69 @@ type killRequest struct {
 	Name string `json:"name"`
 }
 
+// handleNow 返回 Explorer 的即时负载，供界面轮询。
+//
+// 单独一个短采样接口而不是复用 /api/diag：诊断要跑 schtasks、枚举上千个
+// 服务子键，几百毫秒起步；而"现在卡不卡"要的是轻量、可频繁调用的读数。
+func (s *Server) handleNow(w http.ResponseWriter, r *http.Request) {
+	now, err := diag.SampleExplorerLight()
+	if err != nil {
+		// 这里不返回错误码：explorer 短暂不在（正在重启、或恰好被结束）
+		// 是正常现象，界面按"未运行"显示即可，不该让轮询报错。
+		writeJSON(w, map[string]any{
+			"running": false,
+			"verdict": "资源管理器未在运行（可能正在重启）",
+		})
+		return
+	}
+	writeJSON(w, now)
+}
+
+// handleRepeated 单独给出"同名进程过多的"列表。
+//
+// 与 /api/now 一起做轮询：这两个数据变化快（结束进程后立刻该更新），
+// 而启动项、角标那些不适合频繁全量重扫。
+func (s *Server) handleRepeated(w http.ResponseWriter, r *http.Request) {
+	groups, err := diag.RepeatedProcesses(6)
+	if err != nil {
+		writeJSON(w, []any{})
+		return
+	}
+	writeJSON(w, groups)
+}
+
+// handleRestartExplorer 重启资源管理器。
+//
+// 这个操作有真实风险：早先的实现只做"杀掉再起"，在真机上把用户桌面搞没了——
+// 进程起来了、5 秒后自己走了，而接口返回了成功。现在 diag.RestartExplorer
+// 内部会逐步验证并且有兜底路径，这里只负责把过程如实转达给界面。
+func (s *Server) handleRestartExplorer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	res, err := diag.RestartExplorer()
+	if err != nil {
+		// 把每一步的成败一并带上：用户需要知道工具试过什么、为什么没成。
+		writeJSONCode(w, http.StatusInternalServerError, map[string]any{
+			"error":    err.Error(),
+			"attempts": res.Attempts,
+		})
+		return
+	}
+	now, _ := diag.SampleExplorerLight()
+	writeJSON(w, map[string]any{
+		"ok":       true,
+		"method":   res.Method,
+		"oldPid":   res.OldPID,
+		"newPid":   res.NewPID,
+		"attempts": res.Attempts,
+		"now":      now,
+		// 说明重启后的头十几秒负载偏高是正常的，免得用户以为没修好。
+		"note": "刚重启的十几秒内负载偏高属正常（重建桌面与加载图标）；20 秒后的读数才是基线。",
+	})
+}
+
 // handleKill 结束一组同名进程。
 //
 // 这是"卡死的进程拖累 shell"这类问题的直接解法：实测中一次 Explorer 卡顿
@@ -435,6 +501,16 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(map[string]string{"error": msg})
+}
+
+// writeJSONCode 与 writeJSON 相同，但指定状态码。
+func writeJSONCode(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(code)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(v)
 }
 
 // NormalizeAddr 把用户给的 --addr 收拢到回环地址。
