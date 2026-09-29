@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>WinTuner — 系统开关</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2129;
+    --border: #30363d;
+    --text: #e6edf3;
+    --dim: #8b949e;
+    --faint: #6e7681;
+    --accent: #39c5cf;
+    --blue: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 24px 20px 64px; }
+
+  header.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  header.top h1 { font-size: 21px; margin: 0; letter-spacing: .5px; }
+  header.top h1 span { color: var(--accent); }
+  .ver { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .lede { color: var(--dim); margin: 4px 0 20px; font-size: 13px; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 18px; flex-wrap: wrap; }
+  .tab {
+    padding: 8px 16px; border: none; background: transparent; color: var(--dim);
+    font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0;
+  }
+  .tab:hover { color: var(--text); background: #ffffff08; }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+  section > h2 { font-size: 13px; margin: 0 0 12px; color: var(--dim); font-weight: 600; }
+  .hint { color: var(--faint); font-size: 12px; margin: 10px 0 0; }
+
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  .note {
+    border-radius: 8px; padding: 11px 14px; font-size: 13px; margin-bottom: 14px;
+    border: 1px solid var(--border); background: var(--panel-2);
+  }
+  .note.warn { border-color: #4d3c12; background: #1d1808; color: #e8d9a8; }
+  .note.bad  { border-color: #5c1f1c; background: #1f0f0e; color: #f0c2bf; }
+  .note.ok   { border-color: #1f4d29; background: #0d1c11; color: #b9e6c3; }
+  .note b { color: #fff; }
+  .note code { font-family: var(--mono); font-size: 12px; background: #00000040; padding: 1px 5px; border-radius: 4px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; font-weight: 600; color: var(--faint); font-size: 11.5px;
+    padding: 0 10px 7px 0; border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  td { padding: 9px 10px 9px 0; border-bottom: 1px solid #21262d; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.cmd { font-family: var(--mono); font-size: 12px; color: var(--dim); word-break: break-all; max-width: 460px; }
+  td.name { font-weight: 600; }
+  td .sub { display: block; font-weight: 400; font-size: 11.5px; color: var(--faint); margin-top: 2px; }
+
+  .pill {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; border: 1px solid transparent; white-space: nowrap;
+  }
+  .pill.ok   { color: var(--green);  border-color: #1f4d29; background: #0d1f13; }
+  .pill.off  { color: var(--faint);  border-color: var(--border); background: transparent; }
+  .pill.bad  { color: var(--red);    border-color: #5c1f1c; background: #210d0d; }
+  .pill.info { color: var(--blue);   border-color: #1c3a5e; background: #0d1b2a; }
+  .pill.warn { color: var(--yellow); border-color: #4d3c12; background: #211a08; }
+
+  button {
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: #21262d; color: var(--text);
+    transition: background .12s, border-color .12s;
+  }
+  button:hover:not(:disabled) { background: #2d333b; border-color: #4b5563; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #2a7ff5; }
+  button.danger { color: var(--red); }
+  button.sm { padding: 3px 9px; font-size: 12px; white-space: nowrap; }
+
+  .stat { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 12px; }
+  .stat > div { min-width: 110px; }
+  .stat .k { font-size: 11.5px; color: var(--faint); }
+  .stat .v { font-family: var(--mono); font-size: 19px; font-weight: 600; }
+
+  .spinner {
+    display: inline-block; width: 13px; height: 13px; vertical-align: -2px; margin-right: 6px;
+    border: 2px solid #ffffff30; border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: #21262d; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 16px; font-size: 13px; box-shadow: 0 6px 22px #0008;
+    max-width: 92vw; z-index: 20;
+  }
+  .toast.bad { border-color: #5c1f1c; color: #f0c2bf; }
+  .toast.ok  { border-color: #1f4d29; color: #b9e6c3; }
+
+  footer { margin-top: 22px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .foot-note { color: var(--faint); font-size: 12px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1><span>WinTuner</span></h1>
+    <span class="ver" id="ver"></span>
+  </header>
+  <p class="lede">启动项、图标角标、进程注入的开关。禁用一律可还原。</p>
+
+  <div id="banner"></div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="startup">启动项</button>
+    <button class="tab" data-tab="overlay">图标角标</button>
+    <button class="tab" data-tab="inject">进程注入</button>
+    <button class="tab" data-tab="diag">诊断</button>
+  </div>
+
+  <!-- 启动项 -->
+  <div class="pane" id="pane-startup">
+    <section>
+      <h2>开机启动项</h2>
+      <div class="row" style="margin-bottom:12px">
+        <button id="btn-reload-startup">重新扫描</button>
+        <span class="hint" style="margin:0" id="parking-note"></span>
+      </div>
+      <div id="startup-body"></div>
+    </section>
+  </div>
+
+  <!-- 图标角标 -->
+  <div class="pane" id="pane-overlay" hidden>
+    <section>
+      <h2>Explorer 图标叠加处理器</h2>
+      <p class="hint" style="margin:0 0 12px">
+        每画一个图标都要逐个问这些处理器。Windows 实际只采用排序最靠前的 15 个，
+        多出来的纯属拖累；后台服务没在跑的那些还常卡在等待上。
+      </p>
+      <div id="overlay-body"></div>
+    </section>
+  </div>
+
+  <!-- 进程注入 -->
+  <div class="pane" id="pane-inject" hidden>
+    <section>
+      <h2>Winsock 命名空间提供程序（NSP）</h2>
+      <p class="hint" style="margin:0 0 12px">
+        这层最容易被漏掉：它在进程初始化网络库时就被加载，
+        <b>与那个软件是否在运行无关</b>。所以会出现"进程没跑、DLL 却在 Explorer 里"。
+        改 DLL 名字即可禁用，比改注册表目录安全。
+      </p>
+      <div id="inject-body"></div>
+    </section>
+  </div>
+
+  <!-- 诊断 -->
+  <div class="pane" id="pane-diag" hidden>
+    <section>
+      <h2>资源管理器是否在忙</h2>
+      <div class="row" style="margin-bottom:12px">
+        <button class="primary" id="btn-diag">采样 2 秒</button>
+        <span class="hint" style="margin:0" id="diag-when"></span>
+      </div>
+      <div id="diag-body"></div>
+    </section>
+    <section>
+      <h2>同名进程过多的</h2>
+      <p class="hint" style="margin:0 0 12px">
+        一个程序起了十几个实例且多数不干活，通常是"启动失败却没退出"——
+        它们会拖住资源管理器。杀掉即可，不用重启。
+      </p>
+      <div id="repeat-body"></div>
+    </section>
+  </div>
+
+  <footer>
+    <span class="foot-note" id="foot-note"></span>
+    <button class="ghost danger" id="btn-quit">关闭界面</button>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN = new URLSearchParams(location.search).get("t") || "";
+  var state = null;
+  var busy = false;
+
+  // ---------- 工具 ----------
+
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function (k) {
+        var v = attrs[k];
+        if (v === null || v === undefined || v === false) return;
+        if (k === "class") n.className = v;
+        else if (k === "text") n.textContent = v;   // 一律 textContent：路径里出现尖括号也不会被解析
+        else if (k.slice(0, 2) === "on") n.addEventListener(k.slice(2), v);
+        else n.setAttribute(k, v);
+      });
+    }
+    (kids || []).forEach(function (c) {
+      if (c === null || c === undefined || c === false) return;
+      n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    });
+    return n;
+  }
+
+  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+  function api(path, opts) {
+    opts = opts || {};
+    opts.headers = Object.assign({ "X-Wintuner-Token": TOKEN }, opts.headers || {});
+    return fetch(path, opts).then(function (res) {
+      return res.json().catch(function () { return { error: "响应无法解析" }; })
+        .then(function (data) {
+          if (!res.ok) throw new Error(data && data.error ? data.error : "HTTP " + res.status);
+          return data;
+        });
+    });
+  }
+
+  function toast(msg, kind) {
+    var t = el("div", { class: "toast" + (kind ? " " + kind : ""), text: msg });
+    document.body.appendChild(t);
+    setTimeout(function () { t.remove(); }, kind === "bad" ? 6000 : 3000);
+  }
+
+  function pill(text, kind) { return el("span", { class: "pill " + kind, text: text }); }
+
+  // ---------- 顶部与提示条 ----------
+
+  function renderBanner() {
+    var box = document.getElementById("banner");
+    clear(box);
+
+    if (!state) return;
+
+    (state.warnings || []).forEach(function (w) {
+      box.appendChild(el("div", { class: "note warn", text: w }));
+    });
+
+    if (!state.admin) {
+      box.appendChild(el("div", { class: "note bad" }, [
+        el("b", { text: "当前不是管理员。" }),
+        el("div", { text: "可以查看，但切换需要权限：改 HKLM 下的启动项、改服务、动 Program Files 里的 DLL 都要管理员。" }),
+        el("div", { style: "margin-top:8px" }, [
+          el("button", {
+            class: "primary", text: "以管理员身份重启",
+            onclick: function () { doElevate(); }
+          })
+        ])
+      ]));
+    }
+  }
+
+  // ---------- 启动项 ----------
+
+  var SRC_ORDER = {
+    "run-hkcu": 0, "run-hklm": 1, "run-hklm32": 2,
+    "startup-user": 3, "startup-all": 4, "service": 5, "task": 6
+  };
+
+  function renderStartup() {
+    var box = document.getElementById("startup-body");
+    clear(box);
+
+    var items = (state.items || []).slice().sort(function (a, b) {
+      var sa = SRC_ORDER[a.source] === undefined ? 99 : SRC_ORDER[a.source];
+      var sb = SRC_ORDER[b.source] === undefined ? 99 : SRC_ORDER[b.source];
+      if (sa !== sb) return sa - sb;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
+    if (!items.length) {
+      box.appendChild(el("div", { class: "hint", text: "没有扫描到启动项。" }));
+      return;
+    }
+
+    var rows = items.map(function (it) {
+      return el("tr", {}, [
+        el("td", { class: "name" }, [
+          document.createTextNode(it.name),
+          el("span", { class: "sub", text: it.origin })
+        ]),
+        el("td", { class: "cmd", text: it.command }),
+        el("td", {}, [it.enabled ? pill("已启用", "ok") : pill("已禁用", "off")]),
+        el("td", {}, [
+          it.enabled
+            ? el("button", { class: "sm danger", text: "禁用", onclick: function () { toggle("autostart", it.id, false, it.name); } })
+            : el("button", { class: "sm", text: "启用", onclick: function () { toggle("autostart", it.id, true, it.name); } })
+        ])
+      ]);
+    });
+
+    box.appendChild(el("table", {}, [
+      el("thead", {}, [el("tr", {}, [
+        el("th", { text: "名称" }), el("th", { text: "命令 / 位置" }),
+        el("th", { text: "状态" }), el("th", { text: "操作" })
+      ])]),
+      el("tbody", {}, rows)
+    ]));
+  }
+
+  // ---------- 图标角标 ----------
+
+  function renderOverlays() {
+    var box = document.getElementById("overlay-body");
+    clear(box);
+
+    var items = state.overlays || [];
+    if (!items.length) {
+      box.appendChild(el("div", { class: "hint", text: "没有注册任何图标叠加处理器。" }));
+      return;
+    }
+
+    var byVendor = {};
+    items.forEach(function (it) {
+      var v = it.vendor || "其它";
+      (byVendor[v] = byVendor[v] || []).push(it);
+    });
+
+    box.appendChild(el("div", { class: "stat" }, [
+      el("div", {}, [
+        el("div", { class: "k", text: "注册总数" }),
+        el("div", { class: "v", text: String(items.length) })
+      ]),
+      el("div", {}, [
+        el("div", { class: "k", text: "启用中" }),
+        el("div", { class: "v", text: String(items.filter(function (i) { return i.enabled; }).length) })
+      ]),
+      el("div", {}, [
+        el("div", { class: "k", text: "系统实际采用" }),
+        el("div", { class: "v", text: "前 15 个" })
+      ])
+    ]));
+
+    // 残留的排在前面：它们是最该清理的，别让用户往下翻才看到。
+    var rows = Object.keys(byVendor).sort(function (a, b) {
+      var da = byVendor[a].some(function (i) { return i.dead; }) ? 0 : 1;
+      var db = byVendor[b].some(function (i) { return i.dead; }) ? 0 : 1;
+      if (da !== db) return da - db;
+      return a.localeCompare(b);
+    }).map(function (vendor) {
+      var group = byVendor[vendor];
+      var enabledCount = group.filter(function (i) { return i.enabled; }).length;
+      return el("tr", {}, [
+        el("td", { class: "name" }, [
+          document.createTextNode(vendor),
+          el("span", { class: "sub", text: group.length + " 个，启用 " + enabledCount })
+        ]),
+        el("td", { class: "cmd", text: group[0].dll || "" }),
+        el("td", {}, group.map(function (i) {
+          if (i.builtin) return pill("系统自带", "info");
+          if (!i.enabled) return pill("已禁用", "off");
+          return i.dead ? pill("残留", "warn") : pill("启用", "ok");
+        })),
+        el("td", {}, [
+          group.some(function (i) { return i.enabled && !i.builtin; })
+            ? el("button", { class: "sm danger", text: "全部禁用",
+                onclick: function () { toggleGroup("overlay", group, false); } })
+            : null,
+          group.some(function (i) { return !i.enabled; })
+            ? el("button", { class: "sm", text: "全部启用", style: "margin-left:6px",
+                onclick: function () { toggleGroup("overlay", group, true); } })
+            : null
+        ])
+      ]);
+    });
+
+    box.appendChild(el("table", {}, [
+      el("thead", {}, [el("tr", {}, [
+        el("th", { text: "来源" }), el("th", { text: "DLL" }),
+        el("th", { text: "状态" }), el("th", { text: "操作" })
+      ])]),
+      el("tbody", {}, rows)
+    ]));
+  }
+
+  // ---------- 进程注入 ----------
+
+  function renderInjections() {
+    var box = document.getElementById("inject-body");
+    clear(box);
+
+    var items = state.injections || [];
+    if (!items.length) {
+      box.appendChild(el("div", { class: "hint", text: "没有第三方 NSP 注册。" }));
+      return;
+    }
+
+    var third = items.filter(function (i) { return !i.builtin; });
+    if (!third.length) {
+      box.appendChild(el("div", { class: "note ok", text: "只有 Windows 自带的提供程序，没有第三方注入。" }));
+    }
+
+    var rows = items.map(function (p) {
+      return el("tr", {}, [
+        el("td", { class: "name" }, [
+          document.createTextNode(p.vendor),
+          el("span", { class: "sub", text: p.bits + " 位 · 编号 " + p.slot })
+        ]),
+        el("td", { class: "cmd", text: p.dll }),
+        el("td", {}, [
+          p.builtin ? pill("系统自带", "info")
+                    : (p.disabled ? pill("已禁用", "off") : pill("加载中", "warn"))
+        ]),
+        el("td", {}, p.builtin ? null : [
+          p.disabled
+            ? el("button", { class: "sm", text: "启用", onclick: function () { toggle("injection", p.id, true, p.vendor); } })
+            : el("button", { class: "sm danger", text: "禁用", onclick: function () { toggle("injection", p.id, false, p.vendor); } })
+        ])
+      ]);
+    });
+
+    box.appendChild(el("table", {}, [
+      el("thead", {}, [el("tr", {}, [
+        el("th", { text: "提供程序" }), el("th", { text: "DLL" }),
+        el("th", { text: "状态" }), el("th", { text: "操作" })
+      ])]),
+      el("tbody", {}, rows)
+    ]));
+  }
+
+  // ---------- 诊断 ----------
+
+  function renderDiag(data) {
+    var box = document.getElementById("diag-body");
+    clear(box);
+
+    var e = data.explorer;
+    var pct = e.cpuPercent;
+    var kind = pct > 20 ? "bad" : (pct > 8 ? "warn" : "ok");
+    var verdict = pct > 20 ? "偏高，界面多半会卡" : (pct > 8 ? "略高，留意" : "正常");
+
+    box.appendChild(el("div", { class: "stat" }, [
+      el("div", {}, [
+        el("div", { class: "k", text: "CPU 占用" }),
+        el("div", { class: "v", text: pct.toFixed(1) + "%" })
+      ]),
+      el("div", {}, [
+        el("div", { class: "k", text: "折合" }),
+        el("div", { class: "v", text: e.cpuFraction.toFixed(2) + " 核" })
+      ]),
+      el("div", {}, [
+        el("div", { class: "k", text: "采样时长" }),
+        el("div", { class: "v", text: (e.sampleMs / 1000).toFixed(1) + "s" })
+      ])
+    ]));
+    box.appendChild(el("div", { class: "note " + kind, text: verdict }));
+
+    document.getElementById("diag-when").textContent =
+      "PID " + e.pid + " · 采样于 " + new Date(e.at).toLocaleTimeString();
+
+    renderRepeated(data.repeated || []);
+  }
+
+  function renderRepeated(groups) {
+    var box = document.getElementById("repeat-body");
+    clear(box);
+
+    if (!groups.length) {
+      box.appendChild(el("div", { class: "hint", text: "没有异常重复的同名进程。" }));
+      return;
+    }
+
+    var rows = groups.map(function (g) {
+      return el("tr", {}, [
+        el("td", { class: "name", text: g.name }),
+        el("td", {}, [pill(g.count + " 个", g.count >= 10 ? "warn" : "info")]),
+        el("td", { class: "cmd", text: "累计 CPU " + g.cpuSeconds.toFixed(1) + "s" }),
+        el("td", {}, [
+          el("button", { class: "sm danger", text: "结束全部",
+            onclick: function () { killGroup(g.name, g.count); } })
+        ])
+      ]);
+    });
+
+    box.appendChild(el("table", {}, [
+      el("thead", {}, [el("tr", {}, [
+        el("th", { text: "进程" }), el("th", { text: "数量" }),
+        el("th", { text: "CPU" }), el("th", { text: "操作" })
+      ])]),
+      el("tbody", {}, rows)
+    ]));
+  }
+
+  // ---------- 行为 ----------
+
+  function loadState() {
+    return api("/api/state").then(function (st) {
+      state = st;
+      document.getElementById("ver").textContent = /^\d/.test(st.version || "") ? "v" + st.version : (st.version || "");
+      document.getElementById("parking-note").textContent = "禁用项存放在 " + (st.parkingDir || "");
+      document.getElementById("foot-note").textContent = "禁用一律写备份，可一键还原";
+      renderBanner();
+      renderStartup();
+      renderOverlays();
+      renderInjections();
+    });
+  }
+
+  function toggle(kind, id, enable, label) {
+    if (busy) return;
+    busy = true;
+    api("/api/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: kind, id: id, enable: enable })
+    }).then(function (st) {
+      state = st;
+      renderBanner();
+      renderStartup();
+      renderOverlays();
+      renderInjections();
+      toast(label + (enable ? " 已启用" : " 已禁用"), "ok");
+    }).catch(function (e) {
+      toast(e.message, "bad");
+    }).then(function () { busy = false; });
+  }
+
+  // toggleGroup 逐个提交，但只挑需要改变的那几个——
+  // 重复禁用已经禁用的项会返回错误，没必要去撞。
+  function toggleGroup(kind, group, enable) {
+    if (busy) return;
+    var targets = group.filter(function (i) {
+      return !i.builtin && (enable ? !i.enabled : i.enabled);
+    });
+    if (!targets.length) return;
+
+    busy = true;
+    var chain = Promise.resolve();
+    targets.forEach(function (i) {
+      chain = chain.then(function () {
+        return api("/api/toggle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: kind, id: i.name || i.id, enable: enable })
+        }).then(function (st) { state = st; });
+      });
+    });
+    chain.then(function () {
+      renderBanner(); renderOverlays(); renderInjections();
+      toast("已" + (enable ? "启用" : "禁用") + " " + targets.length + " 项", "ok");
+    }).catch(function (e) {
+      toast(e.message, "bad");
+      loadState();
+    }).then(function () { busy = false; });
+  }
+
+  function killGroup(name, count) {
+    if (busy) return;
+    if (!confirm("确定结束全部 " + count + " 个 " + name + "？\n\n未保存的内容会丢失。")) return;
+    busy = true;
+    api("/api/kill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name })
+    }).then(function (r) {
+      toast("已结束 " + r.killed + " 个 " + r.name, "ok");
+      runDiag();
+    }).catch(function (e) {
+      toast(e.message, "bad");
+    }).then(function () { busy = false; });
+  }
+
+  function runDiag() {
+    if (busy) return;
+    busy = true;
+    var box = document.getElementById("diag-body");
+    clear(box);
+    box.appendChild(el("div", { class: "hint" }, [el("span", { class: "spinner" }), "正在采样…"]));
+
+    api("/api/diag", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sampleMs: 2000 })
+    }).then(renderDiag).catch(function (e) {
+      clear(box);
+      box.appendChild(el("div", { class: "note bad", text: e.message }));
+    }).then(function () { busy = false; });
+  }
+
+  function doElevate() {
+    if (busy) return;
+    busy = true;
+    api("/api/elevate", { method: "POST" }).then(function () {
+      toast("已请求管理员权限，请在 UAC 里确认；新窗口会自动打开。", "ok");
+    }).catch(function (e) {
+      toast(e.message, "bad");
+    }).then(function () { busy = false; });
+  }
+
+  function quit() {
+    api("/api/quit", { method: "POST" }).then(function () {
+      document.body.innerHTML = '<div class="wrap"><div class="note ok">界面已关闭，可以关掉这个标签页了。</div></div>';
+    }).catch(function (e) { toast(e.message, "bad"); });
+  }
+
+  // ---------- 标签页 ----------
+
+  Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (t) {
+    t.addEventListener("click", function () {
+      Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (x) { x.classList.remove("active"); });
+      t.classList.add("active");
+      Array.prototype.forEach.call(document.querySelectorAll(".pane"), function (p) { p.hidden = true; });
+      document.getElementById("pane-" + t.getAttribute("data-tab")).hidden = false;
+    });
+  });
+
+  document.getElementById("btn-reload-startup").addEventListener("click", function () {
+    if (busy) return;
+    busy = true;
+    var box = document.getElementById("startup-body");
+    clear(box);
+    box.appendChild(el("div", { class: "hint" }, [el("span", { class: "spinner" }), "正在扫描…"]));
+    loadState().catch(function (e) {
+      clear(box);
+      box.appendChild(el("div", { class: "note bad", text: e.message }));
+    }).then(function () { busy = false; });
+  });
+  document.getElementById("btn-diag").addEventListener("click", runDiag);
+  document.getElementById("btn-quit").addEventListener("click", quit);
+
+  // ---------- 启动 ----------
+
+  loadState().catch(function (e) {
+    document.getElementById("banner").appendChild(
+      el("div", { class: "note bad", text: "无法读取状态：" + e.message })
+    );
+  });
+
+  // 心跳：服务端在长时间无人访问后会自行退出，避免关掉标签页后
+  // 留下一个没有控制台窗口、只能靠任务管理器结束的残留进程。
+  setInterval(function () {
+    api("/api/ping").catch(function () { /* 服务端已退出，忽略 */ });
+  }, 60000);
+})();
+</script>
+</body>
+</html>
