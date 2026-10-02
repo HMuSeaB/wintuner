@@ -56,11 +56,17 @@ func HasOwnerRunning(dll string) bool {
 }
 
 // ownerIdle 按 DLL 名猜它属于哪个软件，再查那个软件在不在跑。
+//
+// 只对"需要常驻后台"的那类软件下判断。像 AutoCAD 的签名角标这种
+// 装了就常驻的功能，主程序本来就不会一直开着——拿"进程没在跑"
+// 去判它没用，只会误伤。
 func ownerIdle(dllBase string) bool {
 	probes := []struct {
 		keyword string
 		procs   []string
 	}{
+		// 这些是"有同步/云盘功能的客户端"，正常使用时会常驻托盘。
+		// 没在跑基本等于没在用。
 		{"yunshell", []string{"baidunetdisk", "yunguanjia"}},
 		{"baidu", []string{"baidunetdisk", "yunguanjia"}},
 		{"nutstore", []string{"nutstore"}},
@@ -72,6 +78,8 @@ func ownerIdle(dllBase string) bool {
 		{"weiyun", []string{"weiyun"}},
 		{"aliyundrive", []string{"aliyundrive", "adrive"}},
 		{"quark", []string{"quark"}},
+		// 注意：这里**不包含** acsign / autodesk 之类。
+		// 它们是"随软件安装常驻"的功能型扩展，主程序不开也该在。
 	}
 
 	for _, p := range probes {

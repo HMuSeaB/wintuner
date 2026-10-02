@@ -119,6 +119,7 @@
   .clean-row:last-of-type { border-bottom: none; }
   .clean-row .name { font-weight: 600; color: var(--text); min-width: 80px; }
   .clean-row .sub { color: var(--dim); font-size: 12.5px; }
+  .warn-text { color: var(--yellow) !important; }
 
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th {
@@ -811,8 +812,15 @@
 
       var rows2 = Object.keys(byVendor2).sort().map(function (vendor) {
         var g = byVendor2[vendor];
+        // 文件还在的项要额外提醒：它可能是"软件当时没开"而非"已经没用了"。
+        // 这类被误禁的话，功能就白丢了。
+        var restorable = g.some(function (i) { return i.dll && !i.dead; });
         return el("tr", {}, [
-          el("td", { class: "name", text: vendor }),
+          el("td", { class: "name" }, [
+            document.createTextNode(vendor),
+            restorable ? el("span", { class: "sub warn-text",
+              text: "程序文件还在——若你仍在使用，建议启用" }) : null
+          ]),
           el("td", { class: "cmd", text: g.length + " 条" }),
           el("td", {}, [pill("已禁用", "off")]),
           el("td", { class: "ops" }, [
