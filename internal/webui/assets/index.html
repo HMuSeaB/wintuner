@@ -81,6 +81,36 @@
   .note b { color: #fff; }
   .note code { font-family: var(--mono); font-size: 12px; background: #00000040; padding: 1px 5px; border-radius: 4px; }
 
+  /* 来源分组：让"该审的"和"别动的"在视觉上分开 */
+  .src-group { margin-bottom: 22px; }
+  .src-group:last-child { margin-bottom: 0; }
+  .src-head {
+    display: flex; align-items: baseline; gap: 8px;
+    padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-bottom: 8px;
+  }
+  .src-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
+  .src-count { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+  .src-help { font-size: 12.5px; color: var(--dim); margin: 0 0 10px; line-height: 1.7; }
+  .src-help b { color: var(--text); }
+
+  /* 折叠块：系统服务那一大坨默认收起来 */
+  details.fold {
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 16px; margin-bottom: 14px; background: var(--panel-2);
+  }
+  details.fold > summary {
+    cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--dim);
+    list-style: none; user-select: none;
+  }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary::before {
+    content: "▸"; display: inline-block; width: 1.1em; color: var(--faint);
+    transition: transform .15s;
+  }
+  details.fold[open] > summary::before { transform: rotate(90deg); }
+  details.fold > summary:hover { color: var(--text); }
+  details.fold > .src-group { margin-top: 16px; }
+
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th {
     text-align: left; font-weight: 600; color: var(--faint); font-size: 11.5px;
@@ -170,6 +200,11 @@
   <div class="pane" id="pane-startup">
     <section>
       <h2>开机启动项</h2>
+      <p class="hint" style="margin:0 0 14px">
+        按来源分成两部分：<b>上面是你该逐条过目的</b>（注册表 Run、启动文件夹），
+        通常只有十几条；<b>下面折叠的是系统与服务</b>，动辄上百条，大多不该动，
+        收起来免得干扰。禁用一律写备份，随时能在「已禁用的」里还原。
+      </p>
       <div class="row" style="margin-bottom:12px">
         <button id="btn-reload-startup">重新扫描</button>
         <span class="hint" style="margin:0" id="parking-note"></span>
@@ -252,6 +287,7 @@
         if (v === null || v === undefined || v === false) return;
         if (k === "class") n.className = v;
         else if (k === "text") n.textContent = v;   // 一律 textContent：路径里出现尖括号也不会被解析
+        else if (k === "html") n.innerHTML = v;     // 只用于代码里写死的常量文案，绝不掺用户数据
         else if (k.slice(0, 2) === "on") n.addEventListener(k.slice(2), v);
         else n.setAttribute(k, v);
       });
@@ -318,45 +354,160 @@
     "startup-user": 3, "startup-all": 4, "service": 5, "task": 6
   };
 
+  // 哪些来源是"用户该逐条审的"。
+  //
+  // 这个划分是必需的：服务动辄上百条，混在一起会让用户对着 134 行发呆，
+  // 而真正该看的其实只有十条左右。把不该动的折叠起来，
+  // 比在一堆系统服务里挑有效得多。
+  var REVIEWABLE = { "run-hkcu": 1, "run-hklm": 1, "run-hklm32": 1, "startup-user": 1, "startup-all": 1 };
+
+  // 来源的说明：告诉用户这类是什么、该不该动。
+  var SRC_HELP = {
+    "run-hkcu": "你自己装的东西基本都在这里。<b>这一组最值得逐条看</b>——不用的就禁用，会挪到存放目录，随时能还原。",
+    "run-hklm": "所有用户共享的自启项。通常是系统组件，偶尔有第三方塞进来。",
+    "run-hklm32": "32 位程序注册的、所有用户共享的自启项。游戏启动器常见。",
+    "startup-user": "启动文件夹里的快捷方式。你把文件拖进去就等于自启。",
+    "startup-all": "所有用户共享的启动文件夹。",
+    "service": "开机自启的 Windows 服务。<b>除非你明确知道是干什么的，否则别动</b>——关错了可能开不了机或功能失效。想优化开机时间，用 Msconfig 或「服务」管理器更稳妥。",
+    "task": "计划任务。有些是系统维护，有些是第三方软件的更新器。"
+  };
+
+  function srcName(src) {
+    return {
+      "run-hkcu": "注册表 · 当前用户",
+      "run-hklm": "注册表 · 所有用户",
+      "run-hklm32": "注册表 · 所有用户（32位）",
+      "startup-user": "启动文件夹 · 当前用户",
+      "startup-all": "启动文件夹 · 所有用户",
+      "service": "服务",
+      "task": "计划任务"
+    }[src] || src;
+  }
+
   function renderStartup() {
     var box = document.getElementById("startup-body");
     clear(box);
 
-    var items = (state.items || []).slice().sort(function (a, b) {
-      var sa = SRC_ORDER[a.source] === undefined ? 99 : SRC_ORDER[a.source];
-      var sb = SRC_ORDER[b.source] === undefined ? 99 : SRC_ORDER[b.source];
-      if (sa !== sb) return sa - sb;
-      return (a.name || "").localeCompare(b.name || "");
-    });
-
-    if (!items.length) {
+    var all = state.items || [];
+    if (!all.length) {
       box.appendChild(el("div", { class: "hint", text: "没有扫描到启动项。" }));
       return;
     }
 
-    var rows = items.map(function (it) {
+    // 先给个总览，让用户知道自己看到的是什么。
+    var reviewable = all.filter(function (i) { return REVIEWABLE[i.source] && i.enabled; });
+    var others = all.filter(function (i) { return !REVIEWABLE[i.source] && i.enabled; });
+
+    box.appendChild(el("div", { class: "stat" }, [
+      el("div", {}, [
+        el("div", { class: "k", text: "建议你过目的" }),
+        el("div", { class: "v", text: String(reviewable.length) })
+      ]),
+      el("div", {}, [
+        el("div", { class: "k", text: "系统/服务类" }),
+        el("div", { class: "v", text: String(others.length) })
+      ])
+    ]));
+
+    // ---- 第一部分：该审的 ----
+    var groups = {};
+    reviewable.forEach(function (it) {
+      (groups[it.source] = groups[it.source] || []).push(it);
+    });
+
+    Object.keys(groups).sort(function (a, b) {
+      return (SRC_ORDER[a] || 99) - (SRC_ORDER[b] || 99);
+    }).forEach(function (src) {
+      box.appendChild(sectionFor(src, groups[src], false));
+    });
+
+    if (!reviewable.length) {
+      box.appendChild(el("div", { class: "note ok", text: "这些位置都是空的——没有第三方开机自启。" }));
+    }
+
+    // ---- 第二部分：折叠起来的那一大坨 ----
+    var otherGroups = {};
+    others.forEach(function (it) {
+      (otherGroups[it.source] = otherGroups[it.source] || []).push(it);
+    });
+
+    var otherKeys = Object.keys(otherGroups).sort(function (a, b) {
+      return (SRC_ORDER[a] || 99) - (SRC_ORDER[b] || 99);
+    });
+
+    if (otherKeys.length) {
+      var totalOthers = others.length;
+      var box2 = el("details", { class: "fold" }, [
+        el("summary", {}, [
+          document.createTextNode("系统与服务类（" + totalOthers + " 条）"),
+          el("span", { class: "sub", style: "margin-left:10px;font-weight:400",
+            text: "大多不该动，收起以免干扰" })
+        ])
+      ]);
+      otherKeys.forEach(function (src) {
+        box2.appendChild(sectionFor(src, otherGroups[src], true));
+      });
+      box.appendChild(box2);
+    }
+
+    // ---- 已禁用的 ----
+    var disabledItems = all.filter(function (i) { return !i.enabled; });
+    if (disabledItems.length) {
+      var box3 = el("details", { class: "fold" }, [
+        el("summary", {}, [
+          document.createTextNode("已禁用的（" + disabledItems.length + " 条）"),
+          el("span", { class: "sub", style: "margin-left:10px;font-weight:400",
+            text: "点「启用」按原样还原" })
+        ])
+      ]);
+      box3.appendChild(sectionFor("disabled", disabledItems, true));
+      box.appendChild(box3);
+    }
+  }
+
+  // sectionFor 渲染一个来源分组：标题 + 说明 + 表格。
+  function sectionFor(src, items, compact) {
+    var help = SRC_HELP[src];
+    var wrap = el("div", { class: "src-group" });
+
+    wrap.appendChild(el("div", { class: "src-head" }, [
+      el("span", { class: "src-name", text: srcName(src) }),
+      el("span", { class: "src-count", text: items.length + " 条" })
+    ]));
+    if (help && !compact) {
+      wrap.appendChild(el("div", { class: "src-help" }, [
+        // help 里含 <b>，用 innerHTML 是有意的——内容是我自己写死的常量，不含用户数据。
+        el("span", { html: help })
+      ]));
+    }
+
+    var rows = items.slice().sort(function (a, b) {
+      return (a.name || "").localeCompare(b.name || "");
+    }).map(function (it) {
       return el("tr", {}, [
-        el("td", { class: "name" }, [
-          document.createTextNode(it.name),
-          el("span", { class: "sub", text: it.origin })
-        ]),
+        el("td", { class: "name", text: it.name }),
         el("td", { class: "cmd", text: it.command }),
-        el("td", {}, [it.enabled ? pill("已启用", "ok") : pill("已禁用", "off")]),
+        el("td", {}, [
+          it.enabled ? pill("已启用", "ok") : pill("已禁用", "off")
+        ]),
         el("td", {}, [
           it.enabled
-            ? el("button", { class: "sm danger", text: "禁用", onclick: function () { toggle("autostart", it.id, false, it.name); } })
-            : el("button", { class: "sm", text: "启用", onclick: function () { toggle("autostart", it.id, true, it.name); } })
+            ? el("button", { class: "sm danger", text: "禁用",
+                onclick: function () { toggle("autostart", it.id, false, it.name); } })
+            : el("button", { class: "sm", text: "启用",
+                onclick: function () { toggle("autostart", it.id, true, it.name); } })
         ])
       ]);
     });
 
-    box.appendChild(el("table", {}, [
+    wrap.appendChild(el("table", {}, [
       el("thead", {}, [el("tr", {}, [
         el("th", { text: "名称" }), el("th", { text: "命令 / 位置" }),
         el("th", { text: "状态" }), el("th", { text: "操作" })
       ])]),
       el("tbody", {}, rows)
     ]));
+    return wrap;
   }
 
   // ---------- 图标角标 ----------

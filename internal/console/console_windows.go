@@ -16,7 +16,15 @@ var (
 	procSetConsoleMode        = kernel32.NewProc("SetConsoleMode")
 	procGetConsoleProcessList = kernel32.NewProc("GetConsoleProcessList")
 	procGetConsoleWindow      = kernel32.NewProc("GetConsoleWindow")
-	procShowWindow            = kernel32.NewProc("ShowWindow")
+
+	// ShowWindow 在 user32 里，不在 kernel32。
+	//
+	// 这里踩过一次很隐蔽的坑：写成 kernel32 时，NewProc 是惰性的，
+	// 直到真正 Call 才会去找这个函数，找不到就直接 panic。
+	// 而这条路径只在"双击启动"（独占控制台）时才走到——在终端里怎么测
+	// 都测不出来，用户一双击就崩，浏览器打开时连不上，看起来像"端口冲突"。
+	user32         = syscall.NewLazyDLL("user32.dll")
+	procShowWindow = user32.NewProc("ShowWindow")
 )
 
 const (
