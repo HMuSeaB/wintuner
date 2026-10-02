@@ -38,6 +38,71 @@ type Item struct {
 	Dead bool `json:"dead"`
 }
 
+// HasOwnerRunning 报告"这个处理器背后的程序在不在跑"。
+//
+// 用它来判断要不要建议清理：残留（Dead）是明确该清的；
+// 而 DLL 存在、主人却没运行的那些，属于"注册着但用不上"——
+// 它们照样会被 Explorer 加载，照样要等一个不存在的进程。
+//
+// 猜不出来时返回 true（当作主人还在），避免把有用的东西标成可清理。
+func HasOwnerRunning(dll string) bool {
+	if dll == "" {
+		return true
+	}
+	name := strings.ToLower(filepath.Base(dll))
+	return !ownerIdle(name)
+}
+
+// ownerIdle 按 DLL 名猜它属于哪个软件，再查那个软件在不在跑。
+func ownerIdle(dllBase string) bool {
+	probes := []struct {
+		keyword string
+		procs   []string
+	}{
+		{"yunshell", []string{"baidunetdisk", "yunguanjia"}},
+		{"baidu", []string{"baidunetdisk", "yunguanjia"}},
+		{"nutstore", []string{"nutstore"}},
+		{"onedrive", []string{"onedrive"}},
+		{"coresync", []string{"coresync", "creative cloud"}},
+		{"adobe", []string{"coresync", "creative cloud"}},
+		{"dropbox", []string{"dropbox"}},
+		{"wps", []string{"wps", "wpscloudsvr"}},
+		{"weiyun", []string{"weiyun"}},
+		{"aliyundrive", []string{"aliyundrive", "adrive"}},
+		{"quark", []string{"quark"}},
+	}
+
+	for _, p := range probes {
+		if !strings.Contains(dllBase, p.keyword) {
+			continue
+		}
+		return !anyProcRunning(p.procs)
+	}
+	return false // 认不出来就当它在跑
+}
+
+var procCache []string
+
+func anyProcRunning(names []string) bool {
+	if procCache == nil {
+		procs, err := processNames()
+		if err != nil {
+			// 查不到就当它在跑，宁可漏报也不误报
+			return true
+		}
+		procCache = procs
+	}
+	for _, p := range procCache {
+		pl := strings.ToLower(p)
+		for _, n := range names {
+			if strings.Contains(pl, strings.ToLower(n)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // List 列出所有已注册的处理器。
 func List() ([]Item, error) {
 	k, err := winreg.Open(winreg.LOCAL_MACHINE, baseKey)

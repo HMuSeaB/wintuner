@@ -94,6 +94,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/now", s.guard(s.handleNow))
 	mux.HandleFunc("/api/repeated", s.guard(s.handleRepeated))
 	mux.HandleFunc("/api/reveal", s.guard(s.handleReveal))
+	mux.HandleFunc("/api/clean-candidates", s.guard(s.handleCleanCandidates))
 	mux.HandleFunc("/api/restart-explorer", s.guard(s.handleRestartExplorer))
 	mux.HandleFunc("/api/kill", s.guard(s.handleKill))
 	mux.HandleFunc("/api/elevate", s.guard(s.handleElevate))
@@ -477,6 +478,51 @@ type revealRequest struct {
 	Path string `json:"path"`
 	// Kind 决定行为：file 打开所在目录并选中该项，dir 直接打开目录。
 	Kind string `json:"kind"`
+}
+
+// cleanCandidate 是一条"建议清理"的叠加处理器。
+type cleanCandidate struct {
+	Name   string `json:"name"`
+	Vendor string `json:"vendor"`
+	Reason string `json:"reason"`
+}
+
+// handleCleanCandidates 找出可以安全清理的图标叠加处理器。
+//
+// 两类判据：
+//   - 残留：CLSID 查不到或 DLL 文件已不在 —— 永远画不出角标，白占名额
+//   - 主人没在运行：DLL 在、但对应软件没开 —— 加载了也在等一个不存在的进程
+//
+// 系统自带的永不列入。判断放在服务端而不是前端：规则只有一份，
+// 前端改不了它，也就不会出现"界面说可以清、实际清错了"的情况。
+func (s *Server) handleCleanCandidates(w http.ResponseWriter, r *http.Request) {
+	items, err := overlays.List()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var out []cleanCandidate
+	for _, it := range items {
+		if !it.Enabled || it.Builtin {
+			continue
+		}
+		switch {
+		case it.Dead:
+			out = append(out, cleanCandidate{
+				Name:   it.Name,
+				Vendor: it.Vendor,
+				Reason: "注册已失效（CLSID 或 DLL 不存在），永远画不出角标",
+			})
+		case !overlays.HasOwnerRunning(it.DLL):
+			out = append(out, cleanCandidate{
+				Name:   it.Name,
+				Vendor: it.Vendor,
+				Reason: "对应软件没在运行，加载了也在空等",
+			})
+		}
+	}
+	writeJSON(w, map[string]any{"candidates": out, "count": len(out)})
 }
 
 // handleReveal 在资源管理器里打开某个文件或目录的位置。

@@ -111,6 +111,15 @@
   details.fold > summary:hover { color: var(--text); }
   details.fold > .src-group { margin-top: 16px; }
 
+  /* 一键清理区里的单行候选 */
+  .clean-row {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 5px 0; border-bottom: 1px solid #ffffff10;
+  }
+  .clean-row:last-of-type { border-bottom: none; }
+  .clean-row .name { font-weight: 600; color: var(--text); min-width: 80px; }
+  .clean-row .sub { color: var(--dim); font-size: 12.5px; }
+
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th {
     text-align: left; font-weight: 600; color: var(--faint); font-size: 11.5px;
@@ -224,6 +233,7 @@
         每画一个图标都要逐个问这些处理器。Windows 实际只采用排序最靠前的 15 个，
         多出来的纯属拖累；后台服务没在跑的那些还常卡在等待上。
       </p>
+      <div id="clean-box"></div>
       <div id="overlay-body"></div>
     </section>
   </div>
@@ -602,6 +612,92 @@
 
   // ---------- 图标角标 ----------
 
+  // 一键清理：把"残留"和"主人没在运行"的处理器一次禁掉。
+  // 候选由服务端算（规则只有一份），这里只负责展示与提交。
+  function loadCleanCandidates() {
+    var box = document.getElementById("clean-box");
+    clear(box);
+    api("/api/clean-candidates").then(function (r) {
+      renderCleanBox(r.candidates || []);
+    }).catch(function (e) {
+      clear(box);
+      box.appendChild(el("div", { class: "note warn", text: "无法计算可清理项：" + e.message }));
+    });
+  }
+
+  function renderCleanBox(cands) {
+    var box = document.getElementById("clean-box");
+    clear(box);
+
+    if (!cands.length) {
+      box.appendChild(el("div", { class: "note ok", text: "没有需要清理的——当前注册的处理器都在正常工作。" }));
+      return;
+    }
+
+    // 按来源归并，界面上一行说清"要清谁、为什么"。
+    var byVendor = {};
+    cands.forEach(function (c) {
+      (byVendor[c.vendor] = byVendor[c.vendor] || []).push(c);
+    });
+
+    var inner = el("div", {});
+    inner.appendChild(el("div", { style: "margin-bottom:10px" }, [
+      el("b", { text: "建议清理 " + cands.length + " 条。" }),
+      document.createTextNode(" 它们要么已经失效，要么对应的软件根本没在跑——加载了也只是在空等。")
+    ]));
+
+    Object.keys(byVendor).sort().forEach(function (v) {
+      var g = byVendor[v];
+      inner.appendChild(el("div", { class: "clean-row" }, [
+        el("span", { class: "name", text: v }),
+        el("span", { class: "sub", text: g.length + " 条 · " + g[0].reason })
+      ]));
+    });
+
+    inner.appendChild(el("div", { class: "row", style: "margin-top:12px" }, [
+      el("button", {
+        class: "primary",
+        text: "一键清理这 " + cands.length + " 条",
+        onclick: function () { cleanAll(cands); }
+      }),
+      el("span", { class: "hint", style: "margin:0",
+        text: "系统自带的会自动跳过；清理可逆，随时能还原" })
+    ]));
+
+    box.appendChild(el("div", { class: "note warn" }, [inner]));
+  }
+
+  function cleanAll(cands) {
+    if (busy) return;
+    if (!confirm("将禁用以下 " + cands.length + " 个图标叠加处理器：\n\n" +
+                 cands.map(function (c) { return "· " + c.vendor; })
+                      .filter(function (v, i, a) { return a.indexOf(v) === i; }).join("\n") +
+                 "\n\n原始注册信息会备份，随时可以还原。继续？")) return;
+
+    busy = true;
+    var done = 0, failed = [];
+    var chain = Promise.resolve();
+    cands.forEach(function (c) {
+      chain = chain.then(function () {
+        return api("/api/toggle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: "overlay", id: c.name, enable: false })
+        }).then(function (st) { state = st; done++; })
+          .catch(function (e) { failed.push(c.vendor + ": " + e.message); });
+      });
+    });
+
+    chain.then(function () {
+      renderBanner(); renderOverlays(); loadCleanCandidates();
+      if (failed.length) {
+        toast("清理了 " + done + " 条，" + failed.length + " 条失败：" + failed[0], "bad");
+      } else {
+        toast("已清理 " + done + " 条，重新加载资源管理器后生效", "ok");
+      }
+    }).then(function () { busy = false; });
+  }
+
   function renderOverlays() {
     var box = document.getElementById("overlay-body");
     clear(box);
@@ -849,6 +945,7 @@
       renderBanner();
       renderStartup();
       renderOverlays();
+      loadCleanCandidates();
       renderInjections();
     });
   }
