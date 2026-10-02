@@ -2,6 +2,8 @@
 *.exe
 *.test
 *.out
+# 构建中断时 Windows 会留下带 ~ 的半成品
+*~
 
 # 编辑器
 .vscode/

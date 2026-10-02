@@ -22,6 +22,7 @@ import (
 	"github.com/HMuSeaB/wintuner/internal/elevate"
 	"github.com/HMuSeaB/wintuner/internal/inject"
 	"github.com/HMuSeaB/wintuner/internal/overlays"
+	"github.com/HMuSeaB/wintuner/internal/shell"
 )
 
 //go:embed assets/index.html
@@ -92,6 +93,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/diag", s.guard(s.handleDiag))
 	mux.HandleFunc("/api/now", s.guard(s.handleNow))
 	mux.HandleFunc("/api/repeated", s.guard(s.handleRepeated))
+	mux.HandleFunc("/api/reveal", s.guard(s.handleReveal))
 	mux.HandleFunc("/api/restart-explorer", s.guard(s.handleRestartExplorer))
 	mux.HandleFunc("/api/kill", s.guard(s.handleKill))
 	mux.HandleFunc("/api/elevate", s.guard(s.handleElevate))
@@ -427,6 +429,46 @@ func (s *Server) handleRestartExplorer(w http.ResponseWriter, r *http.Request) {
 		// 说明重启后的头十几秒负载偏高是正常的，免得用户以为没修好。
 		"note": "刚重启的十几秒内负载偏高属正常（重建桌面与加载图标）；20 秒后的读数才是基线。",
 	})
+}
+
+// revealRequest 请求在资源管理器里定位一个路径。
+type revealRequest struct {
+	// Path 是要定位的文件或目录。
+	Path string `json:"path"`
+	// Kind 决定行为：file 打开所在目录并选中该项，dir 直接打开目录。
+	Kind string `json:"kind"`
+}
+
+// handleReveal 在资源管理器里打开某个文件或目录的位置。
+//
+// 存在的意义：启动项列表里给的是命令字符串，用户看到 "Nexu.exe --foo"
+// 没法知道它在哪、要不要留。能一键跳过去看一眼，比读路径快得多。
+func (s *Server) handleReveal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "只接受 POST")
+		return
+	}
+	var req revealRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体无法解析")
+		return
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		writeErr(w, http.StatusBadRequest, "缺少路径")
+		return
+	}
+
+	var err error
+	if req.Kind == "dir" {
+		err = shell.OpenDir(req.Path)
+	} else {
+		err = shell.RevealFile(req.Path)
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // handleKill 结束一组同名进程。

@@ -119,6 +119,8 @@
   td { padding: 9px 10px 9px 0; border-bottom: 1px solid #21262d; vertical-align: top; }
   tr:last-child td { border-bottom: none; }
   td.cmd { font-family: var(--mono); font-size: 12px; color: var(--dim); word-break: break-all; max-width: 460px; }
+  td.ops { white-space: nowrap; }
+  td.ops button + button { margin-left: 6px; }
   td.name { font-weight: 600; }
   td .sub { display: block; font-weight: 400; font-size: 11.5px; color: var(--faint); margin-top: 2px; }
 
@@ -207,6 +209,7 @@
       </p>
       <div class="row" style="margin-bottom:12px">
         <button id="btn-reload-startup">重新扫描</button>
+        <button id="btn-open-parking">打开禁用项目录</button>
         <span class="hint" style="margin:0" id="parking-note"></span>
       </div>
       <div id="startup-body"></div>
@@ -320,6 +323,79 @@
   }
 
   function pill(text, kind) { return el("span", { class: "pill " + kind, text: text }); }
+
+  // ---------- 与"打开位置"相关的解析 ----------
+
+  // targetOf 从启动项的命令里解析出可定位的路径。
+  //
+  // 命令串的形态很杂，实测见到的几类：
+  //   "C:\...\Nexu.exe"                         → 引号包起来的完整路径
+  //   %windir%\system32\SecurityHealthSystray.exe → 含环境变量，展开后才是真路径
+  //   C:\...\ima.copilot.exe --win-auto-start     → 带参数
+  //   HKLM\SYSTEM\CurrentControlSet\Services\xxx  → 服务，只有注册表路径
+  //
+  // 解析不出来就返回空串——宁可没有按钮，也不要给一个点了会报错的按钮。
+  function targetOf(it) {
+    if (!it.enabled) {
+      // 已禁用的项：命令存的是原始值，但文件已被挪走，打开会失败。
+      return null;
+    }
+    if (it.source === "service") return null;   // 服务没有可打开的文件
+    if (it.source === "task") return null;      // 计划任务用 schtasks 定位，不在这里处理
+
+    var cmd = (it.command || "").trim();
+    if (!cmd) return null;
+
+    // 引号包起来的路径优先——这种最明确。
+    var q = cmd.match(/^"([^"]+\.(?:exe|cmd|bat|vbs|lnk|js|wsh|wsf))"/i);
+    if (q) return { path: expandVars(q[1]), kind: "file" };
+
+    // 启动文件夹的项：命令本身就是完整路径，可能是 .lnk
+    if (it.source === "startup-user" || it.source === "startup-all") {
+      return { path: expandVars(cmd), kind: "file" };
+    }
+
+    // 不带引号：取第一个像路径的片段（到 .exe 等扩展名为止）
+    var m = cmd.match(/^([A-Za-z]:\\[^" ]*?\.(?:exe|cmd|bat|vbs|js|wsh|wsf))/i);
+    if (m) return { path: expandVars(m[1]), kind: "file" };
+    var m2 = cmd.match(/^(%[A-Za-z_]+%\\[^" ]*?\.(?:exe|cmd|bat|vbs|lnk))/i);
+    if (m2) return { path: expandVars(m2[1]), kind: "file" };
+
+    return null;
+  }
+
+  // expandVars 展开常见环境变量。
+  // 服务端拿不到客户端的环境变量，所以在前端做这层替换——
+  // 这几个变量在所有 Windows 上都一样，不需要真的去问系统。
+  function expandVars(p) {
+    return p
+      .replace(/%windir%/gi, "C:\\Windows")
+      .replace(/%systemroot%/gi, "C:\\Windows")
+      .replace(/%programfiles%/gi, "C:\\Program Files")
+      .replace(/%programfiles\(x86\)%/gi, "C:\\Program Files (x86)")
+      .replace(/%appdata%/gi, "%APPDATA%")     // 服务端会展开
+      .replace(/%localappdata%/gi, "%LOCALAPPDATA%")
+      .replace(/%programdata%/gi, "%PROGRAMDATA%");
+  }
+
+  function reveal(target) {
+    if (!target) return;
+    api("/api/reveal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: target.path, kind: target.kind })
+    }).then(function () {
+      toast("已在资源管理器中打开", "ok");
+    }).catch(function (e) {
+      toast(e.message, "bad");
+    });
+  }
+
+  function openParkingDir() {
+    var dir = (state && state.parkingDir) || "";
+    if (!dir) { toast("存放目录未知", "bad"); return; }
+    reveal({ path: dir, kind: "dir" });
+  }
 
   // ---------- 顶部与提示条 ----------
 
@@ -484,13 +560,17 @@
     var rows = items.slice().sort(function (a, b) {
       return (a.name || "").localeCompare(b.name || "");
     }).map(function (it) {
+      var t = targetOf(it);
       return el("tr", {}, [
         el("td", { class: "name", text: it.name }),
         el("td", { class: "cmd", text: it.command }),
         el("td", {}, [
           it.enabled ? pill("已启用", "ok") : pill("已禁用", "off")
         ]),
-        el("td", {}, [
+        el("td", { class: "ops" }, [
+          t ? el("button", { class: "sm", text: "打开位置",
+              title: "在资源管理器中打开并选中",
+              onclick: function () { reveal(t); } }) : null,
           it.enabled
             ? el("button", { class: "sm danger", text: "禁用",
                 onclick: function () { toggle("autostart", it.id, false, it.name); } })
@@ -898,6 +978,7 @@
   });
   document.getElementById("btn-diag").addEventListener("click", runDiag);
   document.getElementById("btn-restart-2").addEventListener("click", restartExplorer);
+  document.getElementById("btn-open-parking").addEventListener("click", openParkingDir);
   document.getElementById("btn-quit").addEventListener("click", quit);
 
   // ---------- 启动 ----------
