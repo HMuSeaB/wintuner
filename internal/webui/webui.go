@@ -328,6 +328,17 @@ type diagRequest struct {
 	SampleMS int `json:"sampleMs"`
 }
 
+// diagResponse 是诊断接口的返回。
+type diagResponse struct {
+	Explorer diag.ExplorerStat `json:"explorer"`
+	Repeated []diag.Group      `json:"repeated"`
+	Modules  []diag.Module     `json:"modules"`
+	// ModulesErr 非空表示模块枚举失败（通常是没提权），界面要如实说明，
+	// 不能让用户以为"没有第三方扩展"。
+	ModulesErr string `json:"modulesErr,omitempty"`
+	Admin      bool   `json:"admin"`
+}
+
 func (s *Server) handleDiag(w http.ResponseWriter, r *http.Request) {
 	ms := 2000
 	if r.Method == http.MethodPost {
@@ -349,18 +360,26 @@ func (s *Server) handleDiag(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	groups, err := diag.RepeatedProcesses(6)
-	if err != nil {
-		// 重复进程统计失败不致命，主数据仍要返回。
-		groups = nil
+
+	res := diagResponse{Explorer: explorer, Admin: elevate.IsAdmin()}
+
+	// 重复进程统计失败不致命，主数据仍要返回。
+	if groups, err := diag.RepeatedProcesses(6); err == nil {
+		res.Repeated = groups
 	}
 
-	writeJSON(w, map[string]any{
-		"explorer":  explorer,
-		"repeated":  groups,
-		"admin":     elevate.IsAdmin(),
-		"sampledMs": ms,
-	})
+	// 模块枚举只取第三方的——Windows 自带的三百多个中文没什么信息量。
+	if mods, err := diag.ExplorerModules(); err == nil {
+		for _, m := range mods {
+			if !m.Builtin {
+				res.Modules = append(res.Modules, m)
+			}
+		}
+	} else {
+		res.ModulesErr = err.Error()
+	}
+
+	writeJSON(w, res)
 }
 
 // killRequest 请求结束一组同名进程。
@@ -383,7 +402,28 @@ func (s *Server) handleNow(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, now)
+
+	// 顺手数一下"孤儿扩展"（注册在外壳里、但主人没在跑的那些）。
+	// 这个数字是负载偏高的直接线索，放在轮询里才能在卡之前就提醒到。
+	out := map[string]any{
+		"running":    true,
+		"pid":        now.PID,
+		"threads":    now.Threads,
+		"cpuPercent": now.CPUPercent,
+		"cpuCores":   now.CPUCores,
+		"sampleMs":   now.SampleMS,
+		"verdict":    now.Verdict,
+	}
+	if mods, err := diag.ExplorerModules(); err == nil {
+		orphans := 0
+		for _, m := range mods {
+			if !m.Builtin && m.Orphan {
+				orphans++
+			}
+		}
+		out["orphans"] = orphans
+	}
+	writeJSON(w, out)
 }
 
 // handleRepeated 单独给出"同名进程过多的"列表。

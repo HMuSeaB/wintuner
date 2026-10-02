@@ -47,6 +47,12 @@ jobs:
         # 包会自己跳过，跑一遍是为了确保那些空实现真的能编译。
         run: go test ./... -v
 
+      - name: 前端逻辑测试
+        # 界面逻辑住在 assets/index.html 里，Go 的测试覆盖不到。
+        # 但它最容易出错的部分是启动项命令串的解析——解析错了会给出
+        # 一个点了就报错的按钮。所以单独用 node 断言一遍。
+        run: node internal/webui/assets/logic_test.js
+
   cross-build:
     name: 交叉编译
     runs-on: ubuntu-latest

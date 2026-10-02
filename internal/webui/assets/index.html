@@ -257,6 +257,16 @@
       </p>
     </section>
     <section>
+      <h2>拖住资源管理器的扩展</h2>
+      <p class="hint" style="margin:0 0 12px">
+        这些是加载进 explorer.exe 的第三方壳扩展。
+        <b>标了「主人没在运行」的，是问题所在</b>——对应的软件已经关了，
+        扩展却还挂在那儿，每次画图标、弹右键菜单都要去联系一个不存在的进程，
+        于是卡在等待上。用得越久累积越多，最后就爆成几百个百分点的 CPU。
+      </p>
+      <div id="modules-body"></div>
+    </section>
+    <section>
       <h2>同名进程过多的</h2>
       <p class="hint" style="margin:0 0 12px">
         一个程序起了十几个实例且多数不干活，通常是"启动失败却没退出"——
@@ -744,7 +754,58 @@
     document.getElementById("diag-when").textContent =
       "PID " + e.pid + " · 采样于 " + new Date(e.at).toLocaleTimeString();
 
+    renderModules(data);
     renderRepeated(data.repeated || []);
+  }
+
+  // renderModules 列出加载进 Explorer 的第三方扩展，把"主人没在运行"的排前面。
+  function renderModules(data) {
+    var box = document.getElementById("modules-body");
+    clear(box);
+
+    if (data.modulesErr) {
+      // 枚举需要提权，失败时要如实说，不能让用户以为"没有第三方扩展"。
+      box.appendChild(el("div", { class: "note warn" }, [
+        el("span", { text: "读不到扩展列表：" + data.modulesErr }),
+        data.admin ? null : el("span", { text: "（枚举进程模块需要管理员权限，用上面的按钮提权后再试）" })
+      ]));
+      return;
+    }
+
+    var mods = (data.modules || []).slice().sort(function (a, b) {
+      if (a.orphan !== b.orphan) return a.orphan ? -1 : 1;   // 孤儿排前面
+      return (a.vendor || "").localeCompare(b.vendor || "");
+    });
+
+    if (!mods.length) {
+      box.appendChild(el("div", { class: "note ok", text: "没有第三方扩展加载进来——这是最干净的状态。" }));
+      return;
+    }
+
+    var orphanCount = mods.filter(function (m) { return m.orphan; }).length;
+    if (orphanCount > 0) {
+      box.appendChild(el("div", { class: "note bad" }, [
+        el("b", { text: orphanCount + " 个扩展的主人没在运行。" }),
+        el("div", { text: "这些是最该处理的——它们已经在拖累资源管理器，却提供不了任何功能。去「图标角标」页把对应来源禁用掉。" })
+      ]));
+    }
+
+    var rows = mods.map(function (m) {
+      return el("tr", {}, [
+        el("td", { class: "name", text: m.vendor }),
+        el("td", { class: "cmd", text: m.name }),
+        el("td", {}, [
+          m.orphan ? pill("主人没在运行", "bad") : pill("在用", "ok")
+        ])
+      ]);
+    });
+
+    box.appendChild(el("table", {}, [
+      el("thead", {}, [el("tr", {}, [
+        el("th", { text: "来源" }), el("th", { text: "DLL" }), el("th", { text: "状态" })
+      ])]),
+      el("tbody", {}, rows)
+    ]));
   }
 
   function renderRepeated(groups) {
@@ -908,13 +969,27 @@
 
     lastNow = now;
     var pct = now.cpuPercent || 0;
+    var orphans = now.orphans || 0;
+
+    // 阈值之外还要看孤儿扩展：负载还不高但孤扩展一堆时，
+    // 就是"快要卡了"的信号——提前说比等它爆成 500% 强。
     var kind = pct >= 60 ? "bad" : (pct >= 20 ? "warn" : "ok");
+    if (kind === "ok" && orphans >= 3) kind = "warn";
 
     box.className = "status " + kind;
     main.appendChild(el("span", { class: "num", text: pct.toFixed(1) + "%" }));
     main.appendChild(el("span", { class: "lbl", text: "  资源管理器 CPU · " + now.threads + " 线程" }));
 
     msg.appendChild(el("span", { text: now.verdict || "" }));
+
+    // 孤儿扩展是比 CPU 更早的信号，单独提示一句。
+    if (orphans > 0) {
+      msg.appendChild(el("span", {
+        style: "margin-left:10px;color:var(--yellow)",
+        text: "· " + orphans + " 个扩展的主人没在运行"
+      }));
+    }
+
     // 超过阈值才给出这个按钮——正常的时候摆个重启按钮只会让人手痒。
     if (kind !== "ok") {
       msg.appendChild(el("button", {
