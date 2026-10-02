@@ -630,7 +630,22 @@
     clear(box);
 
     if (!cands.length) {
-      box.appendChild(el("div", { class: "note ok", text: "没有需要清理的——当前注册的处理器都在正常工作。" }));
+      var disabledCount = (state.overlays || []).filter(function (i) { return !i.enabled; }).length;
+      if (disabledCount > 0) {
+        // 全清完之后，这一栏的任务就变成"怎么把东西找回来"。
+        // 之前没做这个：用户在角标页清理，还原入口却只在启动项页，
+        // 结果清完就找不到恢复的地方了。
+        box.appendChild(el("div", { class: "note ok" }, [
+          el("b", { text: "当前注册的处理器都在正常工作。" }),
+          el("div", { style: "margin-top:6px" }, [
+            document.createTextNode("有 " + disabledCount + " 条已被禁用 —— "),
+            el("button", { class: "sm", text: "查看并还原",
+              onclick: function () { showDisabledOverlays(); } })
+          ])
+        ]));
+      } else {
+        box.appendChild(el("div", { class: "note ok", text: "没有需要清理的——当前注册的处理器都在正常工作。" }));
+      }
       return;
     }
 
@@ -698,77 +713,129 @@
     }).then(function () { busy = false; });
   }
 
+  // showDisabledOverlays 滚到并展开"已禁用"区域。
+  function showDisabledOverlays() {
+    var d = document.getElementById("overlay-disabled");
+    if (!d) return;
+    d.open = true;
+    d.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   function renderOverlays() {
     var box = document.getElementById("overlay-body");
     clear(box);
 
-    var items = state.overlays || [];
+    var all = state.overlays || [];
+    var items = all.filter(function (i) { return i.enabled; });
+
+    // ---- 启用中的：按来源分组 ----
     if (!items.length) {
-      box.appendChild(el("div", { class: "hint", text: "没有注册任何图标叠加处理器。" }));
-      return;
+      box.appendChild(el("div", { class: "hint", text: "没有启用中的图标叠加处理器。" }));
+    } else {
+      var byVendor = {};
+      items.forEach(function (it) {
+        var v = it.vendor || "其它";
+        (byVendor[v] = byVendor[v] || []).push(it);
+      });
+
+      box.appendChild(el("div", { class: "stat" }, [
+        el("div", {}, [
+          el("div", { class: "k", text: "启用中" }),
+          el("div", { class: "v", text: String(items.length) })
+        ]),
+        el("div", {}, [
+          el("div", { class: "k", text: "已禁用" }),
+          el("div", { class: "v", text: String(all.length - items.length) })
+        ]),
+        el("div", {}, [
+          el("div", { class: "k", text: "系统实际采用" }),
+          el("div", { class: "v", text: "前 15 个" })
+        ])
+      ]));
+
+      // 残留的排在前面：它们是最该清理的，别让用户往下翻才看到。
+      var rows = Object.keys(byVendor).sort(function (a, b) {
+        var da = byVendor[a].some(function (i) { return i.dead; }) ? 0 : 1;
+        var db = byVendor[b].some(function (i) { return i.dead; }) ? 0 : 1;
+        if (da !== db) return da - db;
+        return a.localeCompare(b);
+      }).map(function (vendor) {
+        var group = byVendor[vendor];
+        return el("tr", {}, [
+          el("td", { class: "name" }, [
+            document.createTextNode(vendor),
+            el("span", { class: "sub", text: group.length + " 个" })
+          ]),
+          el("td", { class: "cmd", text: group[0].dll || "（无 DLL）" }),
+          el("td", {}, group.map(function (i) {
+            if (i.builtin) return pill("系统自带", "info");
+            return i.dead ? pill("残留", "warn") : pill("启用", "ok");
+          })),
+          el("td", { class: "ops" }, [
+            group.some(function (i) { return !i.builtin; })
+              ? el("button", { class: "sm danger", text: "全部禁用",
+                  onclick: function () { toggleGroup("overlay", group, false); } })
+              : null
+          ])
+        ]);
+      });
+
+      box.appendChild(el("table", {}, [
+        el("thead", {}, [el("tr", {}, [
+          el("th", { text: "来源" }), el("th", { text: "DLL" }),
+          el("th", { text: "状态" }), el("th", { text: "操作" })
+        ])]),
+        el("tbody", {}, rows)
+      ]));
     }
 
-    var byVendor = {};
-    items.forEach(function (it) {
-      var v = it.vendor || "其它";
-      (byVendor[v] = byVendor[v] || []).push(it);
-    });
+    // ---- 已禁用的：还原入口必须在这一页，因为用户就是在这页禁用的 ----
+    var off = all.filter(function (i) { return !i.enabled; });
+    var old = document.getElementById("overlay-disabled");
+    if (old) old.remove();
 
-    box.appendChild(el("div", { class: "stat" }, [
-      el("div", {}, [
-        el("div", { class: "k", text: "注册总数" }),
-        el("div", { class: "v", text: String(items.length) })
-      ]),
-      el("div", {}, [
-        el("div", { class: "k", text: "启用中" }),
-        el("div", { class: "v", text: String(items.filter(function (i) { return i.enabled; }).length) })
-      ]),
-      el("div", {}, [
-        el("div", { class: "k", text: "系统实际采用" }),
-        el("div", { class: "v", text: "前 15 个" })
-      ])
-    ]));
-
-    // 残留的排在前面：它们是最该清理的，别让用户往下翻才看到。
-    var rows = Object.keys(byVendor).sort(function (a, b) {
-      var da = byVendor[a].some(function (i) { return i.dead; }) ? 0 : 1;
-      var db = byVendor[b].some(function (i) { return i.dead; }) ? 0 : 1;
-      if (da !== db) return da - db;
-      return a.localeCompare(b);
-    }).map(function (vendor) {
-      var group = byVendor[vendor];
-      var enabledCount = group.filter(function (i) { return i.enabled; }).length;
-      return el("tr", {}, [
-        el("td", { class: "name" }, [
-          document.createTextNode(vendor),
-          el("span", { class: "sub", text: group.length + " 个，启用 " + enabledCount })
-        ]),
-        el("td", { class: "cmd", text: group[0].dll || "" }),
-        el("td", {}, group.map(function (i) {
-          if (i.builtin) return pill("系统自带", "info");
-          if (!i.enabled) return pill("已禁用", "off");
-          return i.dead ? pill("残留", "warn") : pill("启用", "ok");
-        })),
-        el("td", {}, [
-          group.some(function (i) { return i.enabled && !i.builtin; })
-            ? el("button", { class: "sm danger", text: "全部禁用",
-                onclick: function () { toggleGroup("overlay", group, false); } })
-            : null,
-          group.some(function (i) { return !i.enabled; })
-            ? el("button", { class: "sm", text: "全部启用", style: "margin-left:6px",
-                onclick: function () { toggleGroup("overlay", group, true); } })
-            : null
+    if (off.length) {
+      var det = el("details", { class: "fold", id: "overlay-disabled" }, [
+        el("summary", {}, [
+          document.createTextNode("已禁用的（" + off.length + " 条）"),
+          el("span", { class: "sub", style: "margin-left:10px;font-weight:400",
+            text: "点「启用」按原样还原，图标会回来" })
         ])
       ]);
-    });
 
-    box.appendChild(el("table", {}, [
-      el("thead", {}, [el("tr", {}, [
-        el("th", { text: "来源" }), el("th", { text: "DLL" }),
-        el("th", { text: "状态" }), el("th", { text: "操作" })
-      ])]),
-      el("tbody", {}, rows)
-    ]));
+      var byVendor2 = {};
+      off.forEach(function (it) {
+        var v = it.vendor || "其它";
+        (byVendor2[v] = byVendor2[v] || []).push(it);
+      });
+
+      var rows2 = Object.keys(byVendor2).sort().map(function (vendor) {
+        var g = byVendor2[vendor];
+        return el("tr", {}, [
+          el("td", { class: "name", text: vendor }),
+          el("td", { class: "cmd", text: g.length + " 条" }),
+          el("td", {}, [pill("已禁用", "off")]),
+          el("td", { class: "ops" }, [
+            el("button", { class: "sm", text: "启用",
+              onclick: function () { toggleGroup("overlay", g, true); } })
+          ])
+        ]);
+      });
+
+      det.appendChild(el("div", { class: "src-group" }, [
+        el("div", { class: "src-help", style: "margin:10px 0" }, [
+          el("span", { html: "这些的原始注册信息都备份着，还原是按原样放回，不会改变任何设置。" })
+        ]),
+        el("table", {}, [
+          el("thead", {}, [el("tr", {}, [
+            el("th", { text: "来源" }), el("th", { text: "数量" }),
+            el("th", { text: "状态" }), el("th", { text: "操作" })
+          ])]),
+          el("tbody", {}, rows2)
+        ])
+      ]));
+      box.appendChild(det);
+    }
   }
 
   // ---------- 进程注入 ----------
@@ -962,6 +1029,7 @@
       renderBanner();
       renderStartup();
       renderOverlays();
+      loadCleanCandidates();
       renderInjections();
       toast(label + (enable ? " 已启用" : " 已禁用"), "ok");
     }).catch(function (e) {
@@ -990,7 +1058,7 @@
       });
     });
     chain.then(function () {
-      renderBanner(); renderOverlays(); renderInjections();
+      renderBanner(); renderOverlays(); loadCleanCandidates(); renderInjections();
       toast("已" + (enable ? "启用" : "禁用") + " " + targets.length + " 项", "ok");
     }).catch(function (e) {
       toast(e.message, "bad");

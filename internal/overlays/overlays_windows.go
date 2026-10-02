@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/HMuSeaB/wintuner/internal/winreg"
@@ -103,49 +105,129 @@ func anyProcRunning(names []string) bool {
 	return false
 }
 
-// List 列出所有已注册的处理器。
+// List 列出所有已注册的处理器，外加已禁用的那些。
+//
+// 已禁用的必须一并返回：它们的存在形式是"注册表项已被摘掉 + 备份区里有记录"，
+// 只枚举注册表的话根本看不见它们——用户清完就找不到还原入口了。
 func List() ([]Item, error) {
 	k, err := winreg.Open(winreg.LOCAL_MACHINE, baseKey)
 	if err != nil {
 		return nil, err
 	}
-	defer k.Close()
-
 	names, err := k.SubKeyNames()
+	k.Close()
 	if err != nil {
 		return nil, err
 	}
 
-	disabled := disabledSet()
+	disabled := loadBackups()
 	var out []Item
+	seen := map[string]bool{}
+
 	for _, n := range names {
+		seen[n] = true
 		clsid, err := readDefault(winreg.LOCAL_MACHINE, baseKey+`\`+n)
 		if err != nil {
 			continue
 		}
-		dll := resolveCLSID(clsid)
-		dead := dll == ""
-		if !dead {
-			// DLL 记在注册表里但文件已被删（软件卸载没清干净），同样是死的。
-			if _, err := os.Stat(dll); err != nil {
-				dead = true
-			}
-		}
-		vendor := vendorOf(dll)
-		if dead {
-			vendor = "残留（已失效）"
-		}
-		out = append(out, Item{
-			Name:    n,
-			CLSID:   clsid,
-			DLL:     dll,
-			Vendor:  vendor,
-			Enabled: !disabled[n],
-			Builtin: isBuiltin(dll),
-			Dead:    dead,
-		})
+		out = append(out, buildItem(n, clsid, true))
 	}
+
+	// 补上只存在于备份区的（也就是被本工具禁用的）。
+	for name, clsid := range disabled {
+		if seen[name] {
+			continue // 注册表里也有，以注册表为准
+		}
+		it := buildItem(name, clsid, false)
+		it.Enabled = false
+		out = append(out, it)
+	}
+
+	// 排序让输出稳定：启用的在前，同类按名字。
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Enabled != out[j].Enabled {
+			return out[i].Enabled
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
+}
+
+// buildItem 组装一条记录，并判定它是不是"死的"。
+func buildItem(name, clsid string, enabled bool) Item {
+	dll := resolveCLSID(clsid)
+	dead := dll != "" && !dllExists(dll)
+	vendor := vendorOf(dll)
+	if dll == "" || dead {
+		vendor = "残留（已失效）"
+	}
+	return Item{
+		Name:    name,
+		CLSID:   clsid,
+		DLL:     dll,
+		Vendor:  vendor,
+		Enabled: enabled,
+		Builtin: isBuiltin(dll),
+		Dead:    dll == "" || dead,
+	}
+}
+
+// dllExists 判断注册表里记的路径是否真的指向一个文件。
+//
+// 不能直接 os.Stat：有些扩展（实测 AutoCAD 的 AcSignIcon.dll）在注册表里
+// 只写了**文件名**，没有目录。os.Stat 会在当前工作目录下找，必然找不到，
+// 于是把好好的扩展误判成"残留"。裸文件名要走 PATH 查找。
+func dllExists(p string) bool {
+	if p == "" {
+		return false
+	}
+	// 含分隔符的是完整路径，直接查。
+	if strings.ContainsAny(p, `\/`) {
+		_, err := os.Stat(p)
+		return err == nil
+	}
+	// 裸文件名：在 PATH 与系统目录里找。
+	if _, err := exec.LookPath(p); err == nil {
+		return true
+	}
+	for _, dir := range []string{
+		filepath.Join(os.Getenv("SystemRoot"), "System32"),
+		os.Getenv("SystemRoot"),
+		filepath.Join(os.Getenv("ProgramFiles"), "Common Files", "Adobe", "Acrobat"),
+	} {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, p)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// loadBackups 读出备份区里所有被禁用的处理器。
+func loadBackups() map[string]string {
+	out := map[string]string{}
+	k, err := winreg.Open(winreg.CURRENT_USER, backupKey)
+	if err != nil {
+		return out
+	}
+	defer k.Close()
+	names, err := k.ValueNames()
+	if err != nil {
+		return out
+	}
+	for _, n := range names {
+		v, err := k.GetString(n)
+		if err != nil {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal([]byte(v), &s); err == nil {
+			out[n] = s
+		}
+	}
+	return out
 }
 
 // Disable 禁用一个处理器：先把 CLSID 写进备份区，再删掉注册项。
